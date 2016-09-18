@@ -1,7 +1,13 @@
 stackcollapse-perf.cpp
 ======================
 
-Another [stackcollapse-perf.pl](https://github.com/brendangregg/FlameGraph/blob/master/stackcollapse-perf.pl) implemented in C++ for performance.
+Another [stackcollapse-perf.pl](https://github.com/brendangregg/FlameGraph/blob/master/stackcollapse-perf.pl) implemented in C++ for performance
+
+ - Faster
+ - Less features
+   - No command-line options
+   - No signatures clean-ups (so the results may differ)
+
 
 Build & Install
 ---------------
