@@ -1,5 +1,6 @@
 SOURCES := stackcollapse-perf.cpp
-CXXFLAGS := -std=c++11 -g -O3 -Wall -pedantic
+CXXFLAGS := -std=c++14 -g -O3 -Wall -pedantic
+LDFLAGS := -lpthread -ldl
 
 OUTPUT_EXE := stackcollapse-perf
 OUTPUT_STATIC_EXE := stackcollapse-perf.static
@@ -15,14 +16,14 @@ shared: $(OUTPUT_EXE)
 static: $(OUTPUT_STATIC_EXE)
 debug: $(OUTPUT_DEBUG_EXE)
 
-$(OUTPUT_EXE): $(SOURCES) Makefile
-	$(CXX) $(CXXFLAGS) -o $@ $(SOURCES)
+$(OUTPUT_EXE): $(SOURCES) Makefile string.hpp
+	$(CXX) $(CXXFLAGS) -o $@ $(SOURCES) $(LDFLAGS)
 
-$(OUTPUT_DEBUG_EXE): $(SOURCES) Makefile
-	$(CXX) $(CXXFLAGS) -o $@ -g -fno-inline -fno-omit-frame-pointer $(SOURCES)
+$(OUTPUT_DEBUG_EXE): $(SOURCES) Makefile string.hpp
+	$(CXX) $(CXXFLAGS) -o $@ -g -fno-inline -fno-omit-frame-pointer $(SOURCES) $(LDFLAGS)
 
-$(OUTPUT_STATIC_EXE): $(SOURCES) Makefile
-	$(CXX) $(CXXFLAGS) -o $@ -g -static $(SOURCES)
+$(OUTPUT_STATIC_EXE): $(SOURCES) Makefile string.hpp
+	$(CXX) $(CXXFLAGS) -o $@ -g -static $(SOURCES) $(LDFLAGS)
 
 .PHONY: clean
 clean:
@@ -59,6 +60,10 @@ prof: $(OUTPUT_EXE) $(OUTPUT_DEBUG_EXE) $(SAMPLE_PERF).txt
 	cat $(SAMPLE_PERF).txt | perf record -o $(PROFILE_PERF) -g ./$(OUTPUT_DEBUG_EXE) > /dev/null
 	perf script -f -i $(PROFILE_PERF) | sed 's/+0x[0-9a-f]\+//g' | ./$(OUTPUT_EXE) | $(FLAMEGRAPH) > $(PROFILE_PERF).svg
 	$(BROWSER) $(PROFILE_PERF).svg
+
+.PHONY: valgrind
+valgrind: $(OUTPUT_DEBUG_EXE) $(SAMPLE_PERF).txt
+	cat $(SAMPLE_PERF).txt | valgrind --tool=memcheck --leak-check=full --show-leak-kinds=all ./$(OUTPUT_DEBUG_EXE) > /dev/null
 
 .PHONY: sample
 sample:

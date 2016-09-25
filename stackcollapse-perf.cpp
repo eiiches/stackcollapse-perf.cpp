@@ -9,6 +9,7 @@
 #include <map>
 #include <unordered_map>
 #include <unistd.h>
+#include "string.hpp"
 
 long timeit(std::function<void()> fn) {
 	using namespace std::chrono;
@@ -25,10 +26,7 @@ namespace std {
 template <>
 struct hash<StackTrace> {
 	std::size_t operator()(const StackTrace &stack) const {
-		size_t hash = 17;
-		for (int id : stack)
-			hash = hash * 31 + id;
-		return hash;
+		return std::_Hash_bytes(&stack[0], sizeof(StackFrameId) * stack.size(), static_cast<size_t>(0xc70f6907UL));
 	}
 };
 
@@ -56,19 +54,6 @@ public:
 
 public:
 	void read_file(FILE *fp) {
-		foreach_line_stdio(fp, [this](const char *line) {
-			this->process(line);
-		});
-	}
-
-private:
-	static const char *skip_ws(const char *s) {
-		while (*++s == ' ');
-		return s;
-	}
-
-private:
-	static void foreach_line_stdio(FILE *fp, std::function<void (const char *)> fn) {
 		ssize_t n;
 		size_t capacity = 0;
 
@@ -86,14 +71,20 @@ private:
 				line[n - 1] = '\0';
 				--n;
 			}
-			fn(line);
+			process(line);
 		}
+	}
+
+private:
+	static const char *skip_ws(const char *s) {
+		while (*++s == ' ');
+		return s;
 	}
 
 private:
 	void process(const char *line) {
 		if (line[0] == '\t') {
-			const char *p0, *p1;
+			const char *p0, *p1, *p2;
 
 			// skip instruction pointer
 			p0 = skip_ws(line+1);
@@ -104,14 +95,17 @@ private:
 			}
 
 			p0 = skip_ws(p1);
-			p1 = std::strchr(p0, ' ');
-			if (p1 == NULL) {
-				std::cerr << "invalid: " << line << std::endl;
-				return;
+			p1 = p0;
+			p2 = p1;
+			while (true) {
+				p2 = std::strchr(p2, ' ');
+				if (p2 == NULL)
+					break;
+				p1 = p2;
+				p2 = skip_ws(p2+1);
 			}
-			std::string sym(p0, p1 - p0);
 
-			_handler.on_stack_frame(sym);
+			_handler.on_stack_frame(String::wrap(p0, p1 - p0));
 			return;
 		}
 		if (line[0] == '\0') {
@@ -139,7 +133,7 @@ private:
 
 				p1 = p2;
 			}
-			std::string proc(p0, p1 - p0);
+			const String &proc = String::wrap(p0, p1 - p0);
 
 			p0 = p2;
 			p1 = std::strchr(p0, ' ');
@@ -172,23 +166,24 @@ private:
 
 class StackCollapsingHandler {
 public:
-	void on_stack_start(const std::string &proc, int pid, int tid) {
+	void on_stack_start(const String &proc, int pid, int tid) {
 		_current_process = proc;
 	}
 
-	void on_stack_frame(const std::string &sym) {
-		_current_stack.push_back(get_or_create_symbol_id(sym));
+	void on_stack_frame(const String &sym) {
+		_current_stack.emplace_back(get_or_create_symbol_id(sym));
 	}
 
 	void on_stack_end() {
 		++_n_stacks;
-		_current_stack.push_back(get_or_create_symbol_id(_current_process));
 
-		auto iter = _stack_counts.find(_current_stack);
+		_current_stack.emplace_back(get_or_create_symbol_id(_current_process));
+
+		auto const &iter = _stack_counts.find(_current_stack);
 		if (iter == _stack_counts.end()) {
 			_stack_counts.emplace_hint(iter, _current_stack, 1);
 		} else {
-			++(iter->second);
+			++iter->second;
 		}
 
 		_current_stack.clear();
@@ -203,20 +198,24 @@ public:
 	}
 
 private:
-	int _n_stacks;
-	std::string _current_process;
+	int _n_stacks = 0;
+	String _current_process;
 	StackTrace _current_stack;
 
-	std::vector<std::string> _symbol_names;
-	std::unordered_map<std::string, StackFrameId> _symbol_names_r;
+	std::unordered_map<String, StackFrameId> _symbol_names_r;
 	std::unordered_map<StackTrace, int> _stack_counts;
 
+public:
+	StackCollapsingHandler() {
+		_symbol_names_r.reserve(8192);
+		_stack_counts.reserve(8192);
+	}
+
 private:
-	int get_or_create_symbol_id(const std::string &sym) {
-		auto iter = _symbol_names_r.find(sym);
+	int get_or_create_symbol_id(const String &sym) {
+		auto const &iter = _symbol_names_r.find(sym);
 		if (iter == _symbol_names_r.end()) {
-			int id = _symbol_names.size();
-			_symbol_names.push_back(sym);
+			auto id = _symbol_names_r.size();
 			_symbol_names_r.emplace_hint(iter, sym, id);
 			return id;
 		}
@@ -228,9 +227,9 @@ public:
 		typedef int OrderedStackFrameId;
 
 		std::vector<std::pair<std::string, StackFrameId>> sorted_names;
-		sorted_names.reserve(_symbol_names.size());
+		sorted_names.reserve(_symbol_names_r.size());
 		for (auto const &sym_and_id : _symbol_names_r) {
-			std::string sym = sym_and_id.first;
+			std::string sym = static_cast<std::string>(sym_and_id.first);
 			std::replace(sym.begin(), sym.end(), ';', ':');
 			std::replace(sym.begin(), sym.end(), ' ', '_');
 			sorted_names.emplace_back(sym, sym_and_id.second);
